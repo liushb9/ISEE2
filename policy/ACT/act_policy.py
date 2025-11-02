@@ -31,7 +31,7 @@ class ACTPolicy(nn.Module):
         self.kl_weight = args_override["kl_weight"]
         print(f"KL Weight {self.kl_weight}")
 
-    def __call__(self, qpos, image, actions=None, is_pad=None):
+    def __call__(self, qpos, image, actions=None, is_pad=None, text_feat=None, action_mask=None):
         env_state = None
         normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         image = normalize(image)
@@ -39,7 +39,7 @@ class ACTPolicy(nn.Module):
             actions = actions[:, :self.model.num_queries]
             is_pad = is_pad[:, :self.model.num_queries]
 
-            a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad)
+            a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad, text_feat)
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
             all_l1 = F.l1_loss(actions, a_hat, reduction="none")
@@ -49,7 +49,7 @@ class ACTPolicy(nn.Module):
             loss_dict["loss"] = loss_dict["l1"] + loss_dict["kl"] * self.kl_weight
             return loss_dict
         else:  # inference time
-            a_hat, _, (_, _) = self.model(qpos, image, env_state)  # no action, sample from prior
+            a_hat, _, (_, _) = self.model(qpos, image, env_state, None, None, text_feat)  # no action, sample from prior
             return a_hat
 
     def configure_optimizers(self):
@@ -142,9 +142,12 @@ class ACT:
                 with open(stats_path, "rb") as f:
                     self.stats = pickle.load(f)
                 print(f"Loaded normalization stats from {stats_path}")
+                # Load action_mask if available
+                self.action_mask = self.stats.get("action_mask", np.ones(16))
             else:
                 print(f"Warning: Could not find stats file at {stats_path}")
                 self.stats = None
+                self.action_mask = np.ones(16)
 
             # Load policy weights
             ckpt_path = os.path.join(ckpt_dir, "policy_last.ckpt")
@@ -164,10 +167,20 @@ class ACT:
             return (qpos - self.stats["qpos_mean"]) / self.stats["qpos_std"]
         return qpos
 
-    def post_process(self, action):
-        """Denormalize model outputs"""
+    def post_process(self, action, action_mask=None):
+        """Denormalize model outputs and map back to original action dimension"""
         if self.stats is not None:
-            return action * self.stats["action_std"] + self.stats["action_mean"]
+            action = action * self.stats["action_std"] + self.stats["action_mean"]
+        
+        # Map 16-dim back to 14-dim if needed using action_mask
+        if action_mask is not None:
+            # If mask indicates 14-dim format, extract valid dimensions
+            if np.sum(action_mask) == 14:
+                # Extract valid dimensions: [left_arm(6) + left_gripper(1) + right_arm(6) + right_gripper(1)]
+                valid_indices = np.where(action_mask > 0)[0]
+                if len(valid_indices) == 14:
+                    action = action[valid_indices]
+        
         return action
 
     def get_action(self, obs=None):
@@ -176,6 +189,13 @@ class ACT:
 
         # Convert observations to tensors and normalize qpos - matching imitate_episodes.py
         qpos_numpy = np.array(obs["qpos"])
+        # Pad qpos to 16-dim if needed
+        if len(qpos_numpy) == 14:
+            import sys
+            import os
+            sys.path.append(os.path.dirname(__file__))
+            from process_data import pad_action_14_to_16
+            qpos_numpy = pad_action_14_to_16(qpos_numpy.reshape(1, -1)).reshape(-1)
         qpos_normalized = self.pre_process(qpos_numpy)
         qpos = torch.from_numpy(qpos_normalized).float().to(self.device).unsqueeze(0)
 
@@ -188,10 +208,15 @@ class ACT:
         curr_image = np.stack(curr_images, axis=0)
         curr_image = torch.from_numpy(curr_image).float().to(self.device).unsqueeze(0)
 
+        # Get text_feat from obs if available
+        text_feat = None
+        if "text_feat" in obs:
+            text_feat = torch.from_numpy(obs["text_feat"]).float().to(self.device).unsqueeze(0)
+
         with torch.no_grad():
             # Only query the policy at specified intervals - exactly like imitate_episodes.py
             if self.t % self.query_frequency == 0:
-                self.all_actions = self.policy(qpos, curr_image)
+                self.all_actions = self.policy(qpos, curr_image, text_feat=text_feat)
 
             if self.temporal_agg:
                 # Match temporal aggregation exactly from imitate_episodes.py
@@ -210,10 +235,11 @@ class ACT:
             else:
                 # Direct action selection, same as imitate_episodes.py
                 raw_action = self.all_actions[:, self.t % self.query_frequency]
-
+        
         # Denormalize action
         raw_action = raw_action.cpu().numpy()
-        action = self.post_process(raw_action)
+        action_mask = getattr(self, 'action_mask', np.ones(16))
+        action = self.post_process(raw_action, action_mask)
 
         self.t += 1
         return action

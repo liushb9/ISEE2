@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from copy import deepcopy
 from tqdm import tqdm
 from einops import rearrange
+import clip
 
 from constants import DT
 from constants import PUPPET_GRIPPER_JOINT_OPEN
@@ -24,12 +25,44 @@ from utils import sample_box_pose, sample_insertion_pose  # robot functions
 from utils import compute_dict_mean, set_seed, detach_dict  # helper functions
 from act_policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
+import sys
+sys.path.append("./policy/ACT/")
+from process_data import pad_action_14_to_16
 
 from sim_env import BOX_POSE
 
 import IPython
 
 e = IPython.embed
+
+
+def text2feats(text_inputs):
+    """Convert text instructions to CLIP text features."""
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    model, preprocess = clip.load("RN50", device=device)
+    text_tokens = clip.tokenize(text_inputs).to(device)
+    with torch.no_grad():
+        text_features = model.encode_text(text_tokens)
+        text_feat = text_features.detach().cpu().numpy()
+    return text_feat.astype(np.float32)
+
+
+def convert_task_name_to_instruction(task_name: str) -> str:
+    """Convert task name like 'blocks_ranking_rgb' to 'blocks ranking rgb'."""
+    return task_name.replace("_", " ")
+
+
+def unpad_action_16_to_14(action_16: np.ndarray, action_mask: np.ndarray) -> np.ndarray:
+    """
+    Convert 16-dim action back to 14-dim action using mask.
+    """
+    if action_mask.sum() == 14:
+        # Extract valid dimensions
+        valid_indices = np.where(action_mask > 0)[0]
+        return action_16[valid_indices]
+    else:
+        # Already 16-dim or mask indicates all valid
+        return action_16
 
 
 def main(args):
@@ -60,7 +93,7 @@ def main(args):
     camera_names = task_config["camera_names"]
 
     # fixed parameters
-    state_dim = 14  # yiheng
+    state_dim = 16  # Updated to 16 to support both 14-dim and 16-dim actions
     lr_backbone = 1e-5
     backbone = "resnet18"
     if policy_class == "ACT":
@@ -195,7 +228,19 @@ def eval_bc(config, ckpt_name, save_episode=True):
         stats = pickle.load(f)
 
     pre_process = lambda s_qpos: (s_qpos - stats["qpos_mean"]) / stats["qpos_std"]
-    post_process = lambda a: a * stats["action_std"] + stats["action_mean"]
+    # post_process with action_mask support
+    action_mask = stats.get("action_mask", np.ones(state_dim))
+    def post_process(a):
+        a = a * stats["action_std"] + stats["action_mean"]
+        # Convert 16-dim back to 14-dim if needed
+        if len(a) == 16 and action_mask.sum() == 14:
+            return unpad_action_16_to_14(a, action_mask)
+        return a
+    
+    # Generate text_feat from task_name
+    instruction = convert_task_name_to_instruction(task_name)
+    text_feat_np = text2feats([instruction])[0]  # Get single feature vector
+    text_feat_torch = torch.from_numpy(text_feat_np).float().cuda()
 
     # load environment
     if real_robot:
@@ -238,9 +283,9 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
         ### evaluation loop
         if temporal_agg:
-            all_time_actions = torch.zeros([max_timesteps, max_timesteps + num_queries, state_dim]).cuda()
+            all_time_actions = torch.zeros([max_timesteps, max_timesteps + num_queries, 16]).cuda()  # Use 16-dim for internal processing
 
-        qpos_history = torch.zeros((1, max_timesteps, state_dim)).cuda()
+        qpos_history = torch.zeros((1, max_timesteps, 16)).cuda()  # Use 16-dim for internal processing
         image_list = []  # for visualization
         qpos_list = []
         target_qpos_list = []
@@ -260,6 +305,9 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 else:
                     image_list.append({"main": obs["image"]})
                 qpos_numpy = np.array(obs["qpos"])
+                # Pad qpos to 16-dim if needed
+                if len(qpos_numpy) == 14:
+                    qpos_numpy = pad_action_14_to_16(qpos_numpy.reshape(1, -1)).reshape(-1)
                 qpos = pre_process(qpos_numpy)
                 qpos = torch.from_numpy(qpos).float().cuda().unsqueeze(0)
                 qpos_history[:, t] = qpos
@@ -268,7 +316,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 ### query policy
                 if config["policy_class"] == "ACT":
                     if t % query_frequency == 0:
-                        all_actions = policy(qpos, curr_image)
+                        all_actions = policy(qpos, curr_image, text_feat=text_feat_torch.unsqueeze(0))
                     if temporal_agg:
                         all_time_actions[[t], t:t + num_queries] = all_actions
                         actions_for_curr_step = all_time_actions[:, t]
@@ -344,14 +392,16 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
 
 def forward_pass(data, policy):
-    image_data, qpos_data, action_data, is_pad = data
-    image_data, qpos_data, action_data, is_pad = (
+    image_data, qpos_data, action_data, is_pad, text_feat_data, action_mask_data = data
+    image_data, qpos_data, action_data, is_pad, text_feat_data, action_mask_data = (
         image_data.cuda(),
         qpos_data.cuda(),
         action_data.cuda(),
         is_pad.cuda(),
+        text_feat_data.cuda(),
+        action_mask_data.cuda(),
     )
-    return policy(qpos_data, image_data, action_data, is_pad)  # TODO remove None
+    return policy(qpos_data, image_data, action_data, is_pad, text_feat_data, action_mask_data)
 
 
 def train_bc(train_dataloader, val_dataloader, config):

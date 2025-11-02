@@ -446,7 +446,7 @@ _CONFIGS = [
         name="pi0_base_aloha_robotwin_full",
         model=pi0.Pi0Config(),
         data=LeRobotAlohaDataConfig(
-            repo_id="your_repo_id",  # your datasets repo_id
+            repo_id="pi0_1200",  # your datasets repo_id
             adapt_to_pi=False,
             repack_transforms=_transforms.Group(inputs=[
                 _transforms.RepackTransform({

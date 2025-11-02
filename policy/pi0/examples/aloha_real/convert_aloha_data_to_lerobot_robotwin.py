@@ -22,6 +22,67 @@ import os
 import fnmatch
 
 
+def map_to_unified_state_32dim(state_or_action, unified_dim=32):
+    """
+    Map 14-dim or 16-dim state/action to 32-dim unified state vector.
+    
+    Mapping rules:
+    - 14-dim: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+      -> [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1), padding(18)]
+    - 16-dim: [left_arm(6), padding(1), left_gripper(1), right_arm(6), padding(1), right_gripper(1)]
+      -> [left_arm(6), padding(1), left_gripper(1), right_arm(6), padding(1), right_gripper(1), padding(16)]
+    
+    Args:
+        state_or_action: Array with shape (..., 14) or (..., 16)
+        unified_dim: Target unified dimension (default 32)
+    
+    Returns:
+        unified_state: Array with shape (..., unified_dim)
+        mask: Binary mask indicating valid dimensions, shape (..., unified_dim)
+    """
+    if isinstance(state_or_action, torch.Tensor):
+        device = state_or_action.device
+        dtype = state_or_action.dtype
+        state_np = state_or_action.detach().cpu().numpy()
+        is_torch = True
+    else:
+        state_np = np.asarray(state_or_action)
+        is_torch = False
+    
+    original_shape = state_np.shape
+    state_np = state_np.reshape(-1, state_np.shape[-1])
+    original_dim = state_np.shape[-1]
+    
+    # Create unified state vector
+    unified_state = np.zeros((state_np.shape[0], unified_dim), dtype=state_np.dtype)
+    mask = np.zeros((state_np.shape[0], unified_dim), dtype=np.float32)
+    
+    if original_dim == 14:
+        # 14-dim: [left_arm(6), left_gripper(1), right_arm(6), right_gripper(1)]
+        unified_state[:, :14] = state_np
+        mask[:, :14] = 1.0
+    elif original_dim == 16:
+        # 16-dim: [left_arm(6), padding(1), left_gripper(1), right_arm(6), padding(1), right_gripper(1)]
+        unified_state[:, :16] = state_np
+        # Mark valid dimensions (all except padding positions at indices 6 and 14)
+        mask[:, :16] = 1.0
+        mask[:, 6] = 0.0  # padding dimension
+        mask[:, 14] = 0.0  # padding dimension
+    else:
+        raise ValueError(f"Unsupported dimension: {original_dim}. Expected 14 or 16.")
+    
+    # Reshape back to original shape (with unified_dim instead of original_dim)
+    new_shape = original_shape[:-1] + (unified_dim,)
+    unified_state = unified_state.reshape(new_shape)
+    mask = mask.reshape(new_shape)
+    
+    if is_torch:
+        unified_state = torch.from_numpy(unified_state).to(device=device, dtype=dtype)
+        mask = torch.from_numpy(mask).to(device=device, dtype=dtype)
+    
+    return unified_state, mask
+
+
 @dataclasses.dataclass(frozen=True)
 class DatasetConfig:
     use_videos: bool = True
@@ -66,19 +127,35 @@ def create_empty_dataset(
         "cam_right_wrist",
     ]
 
+    # Use 32-dim unified state vector instead of 14-dim
+    unified_dim = 32
     features = {
         "observation.state": {
             "dtype": "float32",
-            "shape": (len(motors), ),
+            "shape": (unified_dim, ),
             "names": [
-                motors,
+                [f"dim_{i}" for i in range(unified_dim)],
             ],
         },
         "action": {
             "dtype": "float32",
-            "shape": (len(motors), ),
+            "shape": (unified_dim, ),
             "names": [
-                motors,
+                [f"dim_{i}" for i in range(unified_dim)],
+            ],
+        },
+        "observation.state_mask": {
+            "dtype": "float32",
+            "shape": (unified_dim, ),
+            "names": [
+                [f"mask_{i}" for i in range(unified_dim)],
+            ],
+        },
+        "action_mask": {
+            "dtype": "float32",
+            "shape": (unified_dim, ),
+            "names": [
+                [f"mask_{i}" for i in range(unified_dim)],
             ],
         },
     }
@@ -86,18 +163,18 @@ def create_empty_dataset(
     if has_velocity:
         features["observation.velocity"] = {
             "dtype": "float32",
-            "shape": (len(motors), ),
+            "shape": (unified_dim, ),
             "names": [
-                motors,
+                [f"dim_{i}" for i in range(unified_dim)],
             ],
         }
 
     if has_effort:
         features["observation.effort"] = {
             "dtype": "float32",
-            "shape": (len(motors), ),
+            "shape": (unified_dim, ),
             "names": [
-                motors,
+                [f"dim_{i}" for i in range(unified_dim)],
             ],
         }
 
@@ -221,11 +298,31 @@ def populate_dataset(
         with open(json_Path, 'r') as f_instr:
             instruction_dict = json.load(f_instr)
             instructions = instruction_dict['instructions']
-            instruction = np.random.choice(instructions)
+            # Handle both string and list types
+            if isinstance(instructions, str):
+                instruction = instructions
+            elif isinstance(instructions, list):
+                instruction = np.random.choice(instructions)
+            else:
+                raise ValueError(f"instructions must be a string or list, got {type(instructions)}")
+        # Convert state and action to unified 32-dim format
+        state_unified, state_mask = map_to_unified_state_32dim(state)
+        action_unified, action_mask = map_to_unified_state_32dim(action)
+        
+        # Convert to numpy if torch tensors
+        if isinstance(state_unified, torch.Tensor):
+            state_unified = state_unified.numpy()
+            state_mask = state_mask.numpy()
+        if isinstance(action_unified, torch.Tensor):
+            action_unified = action_unified.numpy()
+            action_mask = action_mask.numpy()
+        
         for i in range(num_frames):
             frame = {
-                "observation.state": state[i],
-                "action": action[i],
+                "observation.state": state_unified[i],
+                "action": action_unified[i],
+                "observation.state_mask": state_mask[i],
+                "action_mask": action_mask[i],
                 "task": instruction,
             }
 
@@ -233,9 +330,15 @@ def populate_dataset(
                 frame[f"observation.images.{camera}"] = img_array[i]
 
             if velocity is not None:
-                frame["observation.velocity"] = velocity[i]
+                velocity_unified, _ = map_to_unified_state_32dim(velocity)
+                if isinstance(velocity_unified, torch.Tensor):
+                    velocity_unified = velocity_unified.numpy()
+                frame["observation.velocity"] = velocity_unified[i]
             if effort is not None:
-                frame["observation.effort"] = effort[i]
+                effort_unified, _ = map_to_unified_state_32dim(effort)
+                if isinstance(effort_unified, torch.Tensor):
+                    effort_unified = effort_unified.numpy()
+                frame["observation.effort"] = effort_unified[i]
             dataset.add_frame(frame)
         dataset.save_episode()
 

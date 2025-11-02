@@ -13,6 +13,9 @@ from diffusion_policy.common.sampler import (
 from diffusion_policy.model.common.normalizer import LinearNormalizer
 from diffusion_policy.dataset.base_dataset import BaseImageDataset
 from diffusion_policy.common.normalize_util import get_image_range_normalizer
+from diffusion_policy.common.action_utils import pad_action_14_to_16, create_action_mask
+from diffusion_policy.model.common.normalizer import SingleFieldLinearNormalizer
+import torch
 import pdb
 
 
@@ -28,13 +31,14 @@ class RobotImageDataset(BaseImageDataset):
         val_ratio=0.0,
         batch_size=128,
         max_train_episodes=None,
+        target_action_dim=16,
     ):
 
         super().__init__()
         self.replay_buffer = ReplayBuffer.copy_from_path(
             zarr_path,
             # keys=['head_camera', 'front_camera', 'left_camera', 'right_camera', 'state', 'action'],
-            keys=["head_camera", "state", "action"],
+            keys=["head_camera", "state", "action", "text_feat"],
         )
 
         val_mask = get_val_mask(n_episodes=self.replay_buffer.n_episodes, val_ratio=val_ratio, seed=seed)
@@ -52,6 +56,7 @@ class RobotImageDataset(BaseImageDataset):
         self.horizon = horizon
         self.pad_before = pad_before
         self.pad_after = pad_after
+        self.target_action_dim = target_action_dim
 
         self.batch_size = batch_size
         sequence_length = self.sampler.sequence_length
@@ -86,6 +91,29 @@ class RobotImageDataset(BaseImageDataset):
         normalizer["front_cam"] = get_image_range_normalizer()
         normalizer["left_cam"] = get_image_range_normalizer()
         normalizer["right_cam"] = get_image_range_normalizer()
+        
+        # Create identity normalizer for text_feat (does not normalize)
+        # text_feat has shape (..., 512), so we need to create an identity normalizer
+        # with 512 dimensions, all with scale=1, offset=0
+        if "text_feat" in self.replay_buffer:
+            text_feat_dim = self.replay_buffer["text_feat"].shape[-1]
+            text_feat_scale = torch.ones(text_feat_dim, dtype=torch.float32)
+            text_feat_offset = torch.zeros(text_feat_dim, dtype=torch.float32)
+            # Create dummy stats (not used since scale=1, offset=0)
+            text_feat_stats = {
+                "min": torch.zeros(text_feat_dim, dtype=torch.float32),
+                "max": torch.ones(text_feat_dim, dtype=torch.float32),
+                "mean": torch.zeros(text_feat_dim, dtype=torch.float32),
+                "std": torch.ones(text_feat_dim, dtype=torch.float32),
+            }
+            text_feat_normalizer = SingleFieldLinearNormalizer.create_manual(
+                scale=text_feat_scale,
+                offset=text_feat_offset,
+                input_stats_dict=text_feat_stats,
+            )
+            normalizer["text_feat"] = text_feat_normalizer
+        
+        # Note: text_feat should NOT be normalized - it's already in CLIP embedding space
         return normalizer
 
     def __len__(self) -> int:
@@ -97,6 +125,16 @@ class RobotImageDataset(BaseImageDataset):
         # front_cam = np.moveaxis(sample['front_camera'],-1,1)/255
         # left_cam = np.moveaxis(sample['left_camera'],-1,1)/255
         # right_cam = np.moveaxis(sample['right_camera'],-1,1)/255
+        text_feat = sample["text_feat"].astype(np.float32)  # T, D
+        
+        # Handle action padding: convert 14-dim to 16-dim if needed
+        action = sample["action"].astype(np.float32)  # T, D
+        original_action_dim = action.shape[-1]
+        
+        if original_action_dim == 14 and self.target_action_dim == 16:
+            action, action_mask = pad_action_14_to_16(action)
+        else:
+            action_mask = create_action_mask(self.target_action_dim, valid_dim=original_action_dim)
 
         data = {
             "obs": {
@@ -105,8 +143,10 @@ class RobotImageDataset(BaseImageDataset):
                 # 'left_cam': left_cam, # T, 3, H, W
                 # 'right_cam': right_cam, # T, 3, H, W
                 "agent_pos": agent_pos,  # T, D
+                "text_feat": text_feat,  # T, D
             },
-            "action": sample["action"].astype(np.float32),  # T, D
+            "action": action,  # T, D (possibly padded)
+            "action_mask": action_mask,  # T, D (mask for valid dimensions)
         }
         return data
 
@@ -137,17 +177,30 @@ class RobotImageDataset(BaseImageDataset):
         # front_cam = samples['front_camera'].to(device, non_blocking=True) / 255.0
         # left_cam = samples['left_camera'].to(device, non_blocking=True) / 255.0
         # right_cam = samples['right_camera'].to(device, non_blocking=True) / 255.0
+        text_feat = samples["text_feat"].to(device, non_blocking=True)
         action = samples["action"].to(device, non_blocking=True)
-        return {
+        
+        # Handle action_mask if it exists
+        action_mask = None
+        if "action_mask" in samples:
+            action_mask = samples["action_mask"].to(device, non_blocking=True)
+        
+        result = {
             "obs": {
                 "head_cam": head_cam,  # B, T, 3, H, W
                 # 'front_cam': front_cam, # B, T, 3, H, W
                 # 'left_cam': left_cam, # B, T, 3, H, W
                 # 'right_cam': right_cam, # B, T, 3, H, W
                 "agent_pos": agent_pos,  # B, T, D
+                "text_feat": text_feat,  # B, T, D
             },
             "action": action,  # B, T, D
         }
+        
+        if action_mask is not None:
+            result["action_mask"] = action_mask  # B, T, D
+        
+        return result
 
 
 def _batch_sample_sequence(

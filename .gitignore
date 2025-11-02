@@ -1,14 +1,21 @@
 models/
 data/*
+data_aloha-agilex/*
+data_ARX-X5/*
+data_franka-panda/*
+data_ur5-wsg/*
 !data/process_stuck.py
 __pycache__/
+**/cache/
 **/checkpoints/
+**/processed_data/
+**/training_data/
 result/
 envs/curobo
 *.zip
 viewer_show.*
 eval_video/
-task_config/
+# task_config/
 **/.DS_Store
 
 # eval result

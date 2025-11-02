@@ -78,8 +78,17 @@ class DETRVAE(nn.Module):
         # decoder extra parameters
         self.latent_out_proj = nn.Linear(self.latent_dim, hidden_dim)  # project latent sample to embedding
         self.additional_pos_embed = nn.Embedding(2, hidden_dim)  # learned position embedding for proprio and latent
+        
+        # text feature processing
+        # CLIP RN50 outputs 1024-dim features, project to hidden_dim
+        self.text_feat_dim = 1024  # CLIP RN50 output dimension
+        self.text_feat_proj = nn.Sequential(
+            nn.Linear(self.text_feat_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )  # MLP to project text features to hidden_dim
 
-    def forward(self, qpos, image, env_state, actions=None, is_pad=None):
+    def forward(self, qpos, image, env_state, actions=None, is_pad=None, text_feat=None):
         """
         qpos: batch, qpos_dim
         image: batch, num_cam, channel, height, width
@@ -131,6 +140,13 @@ class DETRVAE(nn.Module):
                 all_cam_pos.append(pos)
             # proprioception features
             proprio_input = self.input_proj_robot_state(qpos)
+            
+            # Process text_feat if provided
+            if text_feat is not None:
+                text_feat_proj = self.text_feat_proj(text_feat)  # (bs, hidden_dim)
+                # Concatenate text_feat with proprio_input
+                proprio_input = proprio_input + text_feat_proj  # Add or concatenate: using addition for simplicity
+            
             # fold camera dimension into width dimension
             src = torch.cat(all_cam_features, axis=3)
             pos = torch.cat(all_cam_pos, axis=3)
@@ -230,7 +246,7 @@ def build_encoder(args):
 
 
 def build(args):
-    state_dim = 14  # TODO hardcode
+    state_dim = args.state_dim  # Use state_dim from args instead of hardcoding
 
     # From state
     # backbone = None # from state for now, no need for conv nets

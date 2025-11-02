@@ -41,7 +41,38 @@ class RobotWorkspace(BaseWorkspace):
         np.random.seed(seed)
         random.seed(seed)
 
+        # Detect actual text_feat dimension from dataset before creating model
+        text_feat_dims = None
+        try:
+            # Try to load a sample from dataset to detect text_feat dimension
+            from diffusion_policy.common.replay_buffer import ReplayBuffer
+            zarr_path = cfg.task.dataset.get("zarr_path", None)
+            if zarr_path is not None:
+                replay_buffer = ReplayBuffer.copy_from_path(zarr_path, keys=["text_feat"])
+                if "text_feat" in replay_buffer:
+                    actual_dim = replay_buffer["text_feat"].shape[-1]
+                    config_dim = cfg.policy.obs_encoder.shape_meta.get("obs", {}).get("text_feat", {}).get("shape", [512])[0]
+                    if actual_dim != config_dim:
+                        print(f"Detected text_feat dimension mismatch: config={config_dim}, actual={actual_dim}")
+                        print(f"Updating shape_meta and using actual dimension {actual_dim}")
+                        text_feat_dims = {"text_feat": actual_dim}
+                        # Update shape_meta in config
+                        if "obs" not in cfg.policy.obs_encoder.shape_meta:
+                            cfg.policy.obs_encoder.shape_meta = OmegaConf.create({"obs": {}})
+                        if "text_feat" not in cfg.policy.obs_encoder.shape_meta["obs"]:
+                            cfg.policy.obs_encoder.shape_meta["obs"]["text_feat"] = OmegaConf.create({})
+                        cfg.policy.obs_encoder.shape_meta["obs"]["text_feat"]["shape"] = [actual_dim]
+        except Exception as e:
+            print(f"Warning: Could not detect text_feat dimension: {e}")
+            print("Will use dimension from config")
+
         # configure model
+        # Pass text_feat_dims to obs_encoder if detected
+        # Temporarily disable struct mode to add text_feat_dims
+        if text_feat_dims is not None:
+            OmegaConf.set_struct(cfg.policy.obs_encoder, False)
+            cfg.policy.obs_encoder.text_feat_dims = OmegaConf.create(text_feat_dims)
+            OmegaConf.set_struct(cfg.policy.obs_encoder, True)
         self.model: DiffusionUnetImagePolicy = hydra.utils.instantiate(cfg.policy)
 
         self.ema_model: DiffusionUnetImagePolicy = None

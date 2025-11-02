@@ -8,6 +8,13 @@ import argparse
 import yaml
 import cv2
 import h5py
+import sys
+
+# Add the diffusion_policy directory to path
+current_file_path = os.path.abspath(__file__)
+parent_dir = os.path.dirname(current_file_path)
+sys.path.append(os.path.join(parent_dir, 'diffusion_policy'))
+from common.text_encoder import text2feats, get_task_instruction
 
 
 def load_hdf5(dataset_path):
@@ -51,7 +58,14 @@ def main():
     num = args.expert_data_num
     task_config = args.task_config
 
-    load_dir = "../../data/" + str(task_name) + "/" + str(task_config)
+    # Generate text features for the task
+    instruction = "ur5 " + get_task_instruction(task_name)
+    print(f"Task instruction: {instruction}")
+    text_feat = text2feats([instruction])  # Shape: (1, 512)
+    text_feat = text_feat.squeeze(0)  # Shape: (512,)
+    print(f"Text feature shape: {text_feat.shape}")
+
+    load_dir = "../../data_ur5-wsg/" + str(task_name) + "/" + str(task_config)
 
     total_count = 0
 
@@ -72,7 +86,8 @@ def main():
         [],
         [],
     )
-    episode_ends_arrays, action_arrays, state_arrays, joint_action_arrays = (
+    episode_ends_arrays, action_arrays, state_arrays, joint_action_arrays, text_feat_arrays = (
+        [],
         [],
         [],
         [],
@@ -101,6 +116,7 @@ def main():
                 head_img = cv2.imdecode(np.frombuffer(head_img_bit, np.uint8), cv2.IMREAD_COLOR)
                 head_camera_arrays.append(head_img)
                 state_arrays.append(joint_state)
+                text_feat_arrays.append(text_feat)  # Add text feature for each frame
             if j != 0:
                 joint_action_arrays.append(joint_state)
 
@@ -114,6 +130,7 @@ def main():
     state_arrays = np.array(state_arrays)
     head_camera_arrays = np.array(head_camera_arrays)
     joint_action_arrays = np.array(joint_action_arrays)
+    text_feat_arrays = np.array(text_feat_arrays)
 
     head_camera_arrays = np.moveaxis(head_camera_arrays, -1, 1)  # NHWC -> NCHW
 
@@ -122,6 +139,7 @@ def main():
     state_chunk_size = (100, state_arrays.shape[1])
     joint_chunk_size = (100, joint_action_arrays.shape[1])
     head_camera_chunk_size = (100, *head_camera_arrays.shape[1:])
+    text_feat_chunk_size = (100, text_feat_arrays.shape[1])
     zarr_data.create_dataset(
         "head_camera",
         data=head_camera_arrays,
@@ -141,6 +159,14 @@ def main():
         "action",
         data=joint_action_arrays,
         chunks=joint_chunk_size,
+        dtype="float32",
+        overwrite=True,
+        compressor=compressor,
+    )
+    zarr_data.create_dataset(
+        "text_feat",
+        data=text_feat_arrays,
+        chunks=text_feat_chunk_size,
         dtype="float32",
         overwrite=True,
         compressor=compressor,

@@ -22,5 +22,5 @@ python3 imitate_episodes.py \
     --num_epochs 6000 \
     --lr 1e-5 \
     --save_freq 2000 \
-    --state_dim 14 \
+    --state_dim 16 \
     --seed ${seed}

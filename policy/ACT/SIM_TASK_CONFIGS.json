@@ -1,0 +1,252 @@
+{
+    "sim-blocks_ranking_rgb-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_rgb/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-hanging_mug-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-hanging_mug/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-place_cans_plasticbox-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-place_cans_plasticbox/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_size-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_size/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_blocks_three-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_blocks_three/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_bowls_three-aloha_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_bowls_three/aloha_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-place_cans_plasticbox-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-place_cans_plasticbox/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_rgb-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_rgb/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-hanging_mug-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-hanging_mug/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_size-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_size/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_bowls_three-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_bowls_three/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_blocks_three-franka_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_blocks_three/franka_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_size-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_size/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-place_cans_plasticbox-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-place_cans_plasticbox/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-hanging_mug-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-hanging_mug/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_rgb-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_rgb/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_bowls_three-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_bowls_three/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_blocks_three-arx_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_blocks_three/arx_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-place_cans_plasticbox-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-place_cans_plasticbox/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-hanging_mug-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-hanging_mug/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_rgb-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_rgb/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-blocks_ranking_size-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-blocks_ranking_size/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_blocks_three-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_blocks_three/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-stack_bowls_three-ur5_clean-50": {
+        "dataset_dir": "./processed_data/sim-stack_bowls_three/ur5_clean-50",
+        "num_episodes": 50,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    },
+    "sim-six_tasks-integrated_clean-1200": {
+        "dataset_dir": "./processed_data/sim-six_tasks/integrated_clean-1200",
+        "num_episodes": 1200,
+        "episode_len": 1000,
+        "camera_names": [
+            "cam_high",
+            "cam_right_wrist",
+            "cam_left_wrist"
+        ]
+    }
+}

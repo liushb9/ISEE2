@@ -42,6 +42,17 @@ class EpisodicDataset(torch.utils.data.Dataset):
             image_dict = dict()
             for cam_name in self.camera_names:
                 image_dict[cam_name] = root[f"/observations/images/{cam_name}"][start_ts]
+            # get text_feat (same for all timesteps in episode)
+            if "/observations/text_feat" in root:
+                text_feat = root["/observations/text_feat"][()]
+            else:
+                # Fallback: create zero vector if text_feat doesn't exist
+                text_feat = np.zeros(1024, dtype=np.float32)  # CLIP RN50 output dim
+            # get action_mask if available
+            if "/observations/action_mask" in root:
+                action_mask = root["/observations/action_mask"][()]
+            else:
+                action_mask = np.ones(action.shape[1], dtype=np.float32)  # assume all valid if not provided
             # get all actions after and including start_ts
             if is_sim:
                 action = root["/action"][start_ts:]
@@ -67,6 +78,8 @@ class EpisodicDataset(torch.utils.data.Dataset):
         qpos_data = torch.from_numpy(qpos).float()
         action_data = torch.from_numpy(padded_action).float()
         is_pad = torch.from_numpy(is_pad).bool()
+        text_feat_data = torch.from_numpy(text_feat).float()
+        action_mask_data = torch.from_numpy(action_mask).float()
 
         # channel last
         image_data = torch.einsum("k h w c -> k c h w", image_data)
@@ -75,8 +88,9 @@ class EpisodicDataset(torch.utils.data.Dataset):
         image_data = image_data / 255.0
         action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
         qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
+        # Note: text_feat is NOT normalized
 
-        return image_data, qpos_data, action_data, is_pad
+        return image_data, qpos_data, action_data, is_pad, text_feat_data, action_mask_data
 
 
 def get_norm_stats(dataset_dir, num_episodes):
@@ -125,12 +139,27 @@ def get_norm_stats(dataset_dir, num_episodes):
     qpos_std = all_qpos_data.std(dim=[0, 1], keepdim=True)
     qpos_std = torch.clip(qpos_std, 1e-2, np.inf)  # clipping
 
+    # Load text_feat and action_mask from first episode to get dimensions
+    dataset_path = os.path.join(dataset_dir, f"episode_0.hdf5")
+    with h5py.File(dataset_path, "r") as root:
+        if "/observations/text_feat" in root:
+            text_feat_example = root["/observations/text_feat"][()]
+        else:
+            text_feat_example = np.zeros(1024, dtype=np.float32)  # CLIP RN50 default
+        action_shape = root["/action"].shape
+        if "/observations/action_mask" in root:
+            action_mask_example = root["/observations/action_mask"][()]
+        else:
+            action_mask_example = np.ones(action_shape[1], dtype=np.float32)
+
     stats = {
         "action_mean": action_mean.numpy().squeeze(),
         "action_std": action_std.numpy().squeeze(),
         "qpos_mean": qpos_mean.numpy().squeeze(),
         "qpos_std": qpos_std.numpy().squeeze(),
         "example_qpos": qpos,
+        "text_feat_dim": text_feat_example.shape[0],
+        "action_mask": action_mask_example,
     }
 
     return stats, max_action_len

@@ -24,6 +24,9 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         # renormalize rgb input with imagenet normalization
         # assuming input in [0,1]
         imagenet_norm: bool = False,
+        # Optional: override text_feat dimensions from actual data
+        # Format: {"text_feat": actual_dim}
+        text_feat_dims: Dict[str, int] = None,
     ):
         """
         Assumes rgb input: B,C,H,W
@@ -33,9 +36,11 @@ class MultiImageObsEncoder(ModuleAttrMixin):
 
         rgb_keys = list()
         low_dim_keys = list()
+        text_keys = list()
         key_model_map = nn.ModuleDict()
         key_transform_map = nn.ModuleDict()
         key_shape_map = dict()
+        key_mlp_map = nn.ModuleDict()
 
         # handle sharing vision backbone
         if share_rgb_model:
@@ -110,17 +115,35 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 key_transform_map[key] = this_transform
             elif type == "low_dim":
                 low_dim_keys.append(key)
+            elif type == "text":
+                text_keys.append(key)
+                # Create MLP for text features
+                # Use actual dimension from text_feat_dims if provided, otherwise use shape_meta
+                if text_feat_dims is not None and key in text_feat_dims:
+                    text_dim = text_feat_dims[key]
+                else:
+                    text_dim = shape[0]
+                agent_pos_dim = obs_shape_meta.get("agent_pos", {}).get("shape", [14])[0]
+                mlp = nn.Sequential(
+                    nn.Linear(text_dim, agent_pos_dim * 2),
+                    nn.ReLU(),
+                    nn.Linear(agent_pos_dim * 2, agent_pos_dim),
+                )
+                key_mlp_map[key] = mlp
             else:
                 raise RuntimeError(f"Unsupported obs type: {type}")
         rgb_keys = sorted(rgb_keys)
         low_dim_keys = sorted(low_dim_keys)
+        text_keys = sorted(text_keys)
 
         self.shape_meta = shape_meta
         self.key_model_map = key_model_map
         self.key_transform_map = key_transform_map
+        self.key_mlp_map = key_mlp_map
         self.share_rgb_model = share_rgb_model
         self.rgb_keys = rgb_keys
         self.low_dim_keys = low_dim_keys
+        self.text_keys = text_keys
         self.key_shape_map = key_shape_map
 
     def forward(self, obs_dict):
@@ -172,6 +195,24 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 assert batch_size == data.shape[0]
             assert data.shape[1:] == self.key_shape_map[key]
             features.append(data)
+
+        # process text input with MLP
+        for key in self.text_keys:
+            data = obs_dict[key]
+            if batch_size is None:
+                batch_size = data.shape[0]
+            else:
+                assert batch_size == data.shape[0]
+            # Process text feature through MLP
+            mlp = self.key_mlp_map[key]
+            # If data has time dimension, process each timestep
+            if len(data.shape) == 3:  # B, T, D
+                data = data.reshape(-1, data.shape[-1])  # B*T, D
+                processed_data = mlp(data)  # B*T, output_dim
+                processed_data = processed_data.reshape(batch_size, -1, processed_data.shape[-1])  # B, T, output_dim
+            else:  # B, D
+                processed_data = mlp(data)  # B, output_dim
+            features.append(processed_data)
 
         # concatenate all features
         result = torch.cat(features, dim=-1)

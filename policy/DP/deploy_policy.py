@@ -1,8 +1,17 @@
 import numpy as np
 from .dp_model import DP
 import yaml
+import sys
+import os
 
-def encode_obs(observation):
+# Add the diffusion_policy directory to path
+current_file_path = os.path.abspath(__file__)
+parent_dir = os.path.dirname(current_file_path)
+sys.path.append(os.path.join(parent_dir, 'diffusion_policy'))
+from common.text_encoder import text2feats, get_task_instruction
+from common.action_utils import unpad_action_16_to_14
+
+def encode_obs(observation, task_name=None):
     head_cam = (np.moveaxis(observation["observation"]["head_camera"]["rgb"], -1, 0) / 255)
     left_cam = (np.moveaxis(observation["observation"]["left_camera"]["rgb"], -1, 0) / 255)
     right_cam = (np.moveaxis(observation["observation"]["right_camera"]["rgb"], -1, 0) / 255)
@@ -12,6 +21,14 @@ def encode_obs(observation):
         right_cam=right_cam,
     )
     obs["agent_pos"] = observation["joint_action"]["vector"]
+    
+    # Add text feature if task_name is provided
+    if task_name is not None:
+        instruction = get_task_instruction(task_name)
+        text_feat = text2feats([instruction])  # Shape: (1, 512)
+        text_feat = text_feat.squeeze(0)  # Shape: (512,)
+        obs["text_feat"] = text_feat
+    
     return obs
 
 
@@ -29,22 +46,28 @@ def get_model(usr_args):
     return DP(ckpt_file, n_obs_steps=n_obs_steps, n_action_steps=n_action_steps)
 
 
-def eval(TASK_ENV, model, observation):
+def eval(TASK_ENV, model, observation, task_name=None, original_action_dim=14):
     """
     TASK_ENV: Task Environment Class, you can use this class to interact with the environment
     model: The model from 'get_model()' function
     observation: The observation about the environment
+    task_name: Task name for generating text features
+    original_action_dim: Original action dimension (14 or 16)
     """
-    obs = encode_obs(observation)
+    obs = encode_obs(observation, task_name=task_name)
     instruction = TASK_ENV.get_instruction()
 
     # ======== Get Action ========
     actions = model.get_action(obs)
+    
+    # Unpad actions if needed (convert 16-dim back to 14-dim)
+    if original_action_dim == 14 and actions.shape[-1] == 16:
+        actions = unpad_action_16_to_14(actions, original_dim=14)
 
     for action in actions:
         TASK_ENV.take_action(action)
         observation = TASK_ENV.get_obs()
-        obs = encode_obs(observation)
+        obs = encode_obs(observation, task_name=task_name)
         model.update_obs(obs)
 
 def reset_model(model):

@@ -10,6 +10,9 @@ import cv2
 import argparse
 import pdb
 import json
+import torch
+import clip
+from typing import List
 
 
 def load_hdf5(dataset_path):
@@ -48,7 +51,70 @@ def images_encoding(imgs):
     return encode_data, max_len
 
 
-def data_transform(path, episode_num, save_path):
+def text2feats(text_inputs: List[str]):
+    """Convert text instructions to CLIP text features."""
+    # Load model
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    model, preprocess = clip.load("RN50", device=device)
+    text_tokens = clip.tokenize(text_inputs).to(device)
+    with torch.no_grad():
+        text_features = model.encode_text(text_tokens)
+        text_feat = text_features.detach().cpu().numpy()
+    return text_feat.astype(np.float32)
+
+
+def convert_task_name_to_instruction(task_name: str) -> str:
+    task_instruction = task_name.replace("_", " ")
+    return f"ur5 {task_instruction}"
+
+
+def pad_action_14_to_16(action_14: np.ndarray) -> np.ndarray:
+    """
+    Convert 14-dim action to 16-dim action with padding.
+    Format: [left_arm(6) + left_gripper(1) + right_arm(6) + right_gripper(1)] = 14
+    To: [left_arm(6) + padding(1) + left_gripper(1) + right_arm(6) + padding(1) + right_gripper(1)] = 16
+    """
+    if action_14.shape[-1] == 14:
+        left_arm = action_14[..., :6]
+        left_gripper = action_14[..., 6:7]
+        right_arm = action_14[..., 7:13]
+        right_gripper = action_14[..., 13:14]
+        # Pad to 16 dim: (6+padding+1, 6+padding+1)
+        action_16 = np.concatenate([
+            left_arm,
+            np.zeros((*action_14.shape[:-1], 1)),  # padding
+            left_gripper,
+            right_arm,
+            np.zeros((*action_14.shape[:-1], 1)),  # padding
+            right_gripper
+        ], axis=-1)
+        return action_16.astype(np.float32)
+    elif action_14.shape[-1] == 16:
+        return action_14.astype(np.float32)
+    else:
+        raise ValueError(f"Unexpected action dimension: {action_14.shape[-1]}")
+
+
+def get_action_mask(action_dim: int) -> np.ndarray:
+    """
+    Create a mask indicating valid dimensions in 16-dim action space.
+    Returns mask of shape (16,) where 1 indicates valid, 0 indicates padding.
+    """
+    if action_dim == 14:
+        # Mask for 14-dim: [left_arm(6) + left_gripper(1) + right_arm(6) + right_gripper(1)]
+        mask = np.array([1, 1, 1, 1, 1, 1, 1,  # left_arm(6) + left_gripper(1)
+                         0,  # padding
+                         1, 1, 1, 1, 1, 1, 1,  # right_arm(6) + right_gripper(1)
+                         0])  # padding
+        return mask.astype(np.float32)
+    elif action_dim == 16:
+        # All dimensions are valid for 16-dim
+        return np.ones(16, dtype=np.float32)
+    else:
+        raise ValueError(f"Unexpected action dimension: {action_dim}")
+
+
+def data_transform(path, episode_num, save_path, task_name=None):
     begin = 0
     floders = os.listdir(path)
     assert episode_num <= len(floders), "data num not enough"
@@ -100,18 +166,42 @@ def data_transform(path, episode_num, save_path):
 
             if j != 0:
                 action = state
-                actions.append(action)
+                # Convert action to 16-dim if needed
+                action_16 = pad_action_14_to_16(action.reshape(1, -1)).reshape(-1)
+                actions.append(action_16)
                 left_arm_dim.append(left_arm.shape[0])
                 right_arm_dim.append(right_arm.shape[0])
+
+        # Generate text_feat for this task
+        if task_name is not None:
+            instruction = convert_task_name_to_instruction(task_name)
+            text_feat = text2feats([instruction])[0]  # Get single feature vector
+        else:
+            # Default instruction if task_name not provided
+            text_feat = text2feats(["default task"])[0]
 
         hdf5path = os.path.join(save_path, f"episode_{i}.hdf5")
 
         with h5py.File(hdf5path, "w") as f:
-            f.create_dataset("action", data=np.array(actions))
+            actions_array = np.array(actions)
+            # Detect original action dimension
+            original_action_dim = actions_array.shape[1] if len(actions_array) > 0 else 14
+            
+            # Ensure actions are 16-dim
+            if original_action_dim == 14:
+                actions_array = pad_action_14_to_16(actions_array)
+            
+            f.create_dataset("action", data=actions_array)
             obs = f.create_group("observations")
-            obs.create_dataset("qpos", data=np.array(qpos))
+            qpos_array = np.array(qpos)
+            # Also pad qpos to 16-dim if needed
+            if qpos_array.shape[1] == 14:
+                qpos_array = pad_action_14_to_16(qpos_array)
+            obs.create_dataset("qpos", data=qpos_array)
             obs.create_dataset("left_arm_dim", data=np.array(left_arm_dim))
             obs.create_dataset("right_arm_dim", data=np.array(right_arm_dim))
+            obs.create_dataset("action_mask", data=get_action_mask(original_action_dim))
+            obs.create_dataset("text_feat", data=text_feat)
             image = obs.create_group("images")
             # cam_high_enc, len_high = images_encoding(cam_high)
             # cam_right_wrist_enc, len_right = images_encoding(cam_right_wrist)
@@ -144,9 +234,10 @@ if __name__ == "__main__":
 
     begin = 0
     begin = data_transform(
-        os.path.join("../../data/", task_name, task_config, 'data'),
+        os.path.join("../../data_ur5-wsg/", task_name, task_config, 'data'),
         expert_data_num,
         f"processed_data/sim-{task_name}/{task_config}-{expert_data_num}",
+        task_name=task_name,
     )
 
     SIM_TASK_CONFIGS_PATH = "./SIM_TASK_CONFIGS.json"
